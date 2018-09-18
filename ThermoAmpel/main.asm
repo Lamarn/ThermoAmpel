@@ -28,26 +28,24 @@
 
 	
 .org $000
-    jmp reset
+    jmp RESET
 .org INT0addr
-	jmp int0_knopf_mitte
+	jmp INT0_BUTTON_MIDDLE
 .org INT1addr
-	jmp int1_knopf_rechts
+	jmp INT1_BUTTON_RIGHT
 .org INT2addr
-	jmp int2_knopf_links
-
-
-reset:
+	jmp INT2_BUTTON_LEFT
+	
+RESET:
 	; init the stack
-	ldi r16,low(RAMEND) 
-	out SPL,r16 
-	ldi r16,high(RAMEND) 
-	out SPH,r16
+	ldi r16, low(RAMEND)
+	out SPL, r16
+	ldi r16, high(RAMEND)
+	out SPH, r16
 
 	; LED pins as output
 	ldi r16, 0b11100000
 	out DDRA, r16
-
 
 	; Falling edge of INT1, INT0 generates interrupt request
 	;ldi r16, (1<<ISC11) | (1<<ISC01)
@@ -61,41 +59,31 @@ reset:
 	out GICR, r16
 	
 	; set global interrupt enable
-	sei 
-/*	
-	ldi r16, $FF
-	out DDRD, r16
+	sei
 
-	out PORTD, r16
-	*/
+MAIN:
+	ldi r16, 
+	rjmp MAIN
 
-	
-	 
-
-main:
-	rjmp main
-
-
-
-int0_knopf_mitte:
+INT0_BUTTON_MIDDLE:
 	; Toggle gelbe LED
-	in r16, PORTA
+	in r16, PINA
 	ldi r17, 0b01000000
 	eor r16, r17
 	out PORTA, r16
 reti
 
-int1_knopf_rechts:
+INT1_BUTTON_RIGHT:
 	; Toggle grüne LED
-	in r16, PORTA
+	in r16, PINA
 	ldi r17, 0b10000000
 	eor r16, r17
 	out PORTA, r16
 reti
 
-int2_knopf_links:
+INT2_BUTTON_LEFT:
 	; Toggle rote LED
-	in r16, PORTA
+	in r16, PINA
 	ldi r17, 0b00100000
 	eor r16, r17
 	out PORTA, r16
