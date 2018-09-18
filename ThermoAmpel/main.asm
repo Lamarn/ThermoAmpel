@@ -61,8 +61,18 @@ RESET:
 	; set global interrupt enable
 	sei
 
+	; internen pull-up resistor für buttons aktivieren (Quelle: www.mikrocontroller.net/articles/AVR-Tutorial:_IO-Grundlagen#Pullup-Widerstand)
+	ldi r16, 0x00
+	out DDRD, r16 ; Pins am Port D auf Eingang setzen, eventuell konflikt mit JTAG schnittstelle? (unwichtig)
+
+	ldi r16, 0b00001100
+	out PORTD, r16 ; Pullup Widerstand aktivieren bei INT0 INT1
+	
+	cbi DDRB, 2 
+	sbi PORTB, 2 ; Das selbe für INT2
+
+
 MAIN:
-	ldi r16, 
 	rjmp MAIN
 
 INT0_BUTTON_MIDDLE:
