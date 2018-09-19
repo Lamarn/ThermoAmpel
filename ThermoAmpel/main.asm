@@ -33,6 +33,8 @@
 	jmp INT0_BUTTON_MIDDLE
 .org INT1addr
 	jmp INT1_BUTTON_RIGHT
+;.org $00C
+;	jmp TIMER1_INTERRUPT_500MS ; Routine nicht nötig, da Flag in DELAY_500MS manuell abgefragt wird
 .org INT2addr
 	jmp INT2_BUTTON_LEFT
 	
@@ -71,9 +73,26 @@ RESET:
 	cbi DDRB, 2 
 	sbi PORTB, 2 ; Das selbe für INT2
 
+	; configure 16bit-timer
+
+	; 16-bit counter prescaler auf /64 stellen WGM12: setzt timer zurück wenn übereinstimmung
+	ldi r16, (1<<CS11) | (1<<CS10) | (1<<WGM12)
+	out TCCR1B, r16
+
+	;ldi r16, (1<<OCIE1A) ; interrupt bei nem match zwischen counter und ocr1a
+	;out TIMSK, r16 ; Nicht enablen, um manuell abfragen zu können
+
+
 
 MAIN:
+	rcall DELAY_500MS
 	rjmp MAIN
+
+/*
+TIMER1_INTERRUPT_500MS:
+	nop
+reti
+*/
 
 INT0_BUTTON_MIDDLE:
 	; Toggle gelbe LED
@@ -98,6 +117,43 @@ INT2_BUTTON_LEFT:
 	eor r16, r17
 	out PORTA, r16
 reti
+
+DELAY_500MS:
+	; lade 31250 in compare register, weil 1/(4000000/64) * 31250 = 0.5
+	ldi r17, 0b01111010
+	ldi r16, 0b00010010 
+	out OCR1AH, r17
+	out OCR1AL, r16 
+
+	; starte counter bei 0
+	rcall RESET_16BITCOUNTER
+
+	loop:
+		in r16, TIFR
+		sbrs r16, OCF1A ; SBRS Skip if Bit in Register is Set 
+		rjmp loop
+	
+	; reset match bit
+	ldi r16, (1<<OCF1A) 
+	out TIFR, r16
+ret
+		
+RESET_16BITCOUNTER:
+	; Schreiben in counter muss atomar geschehen, daher interrupt disablen
+	; Schreiben geschieht vom High to Lowbyte, lesen andersrum
+	ldi r17, 0x00
+	ldi r16, 0x00
+	; Save global interrupt flag
+	in r18, SREG
+	; Disable interrupts
+	cli
+	; Set TCNT 1 to r17:r16
+	out TCNT1H,r17
+	out TCNT1L,r16
+	; Restore global interrupt flag
+	out SREG,r18
+ret
+
 
 CALC_TEMPERATURE:
 /* 
