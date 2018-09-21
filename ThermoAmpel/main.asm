@@ -1,18 +1,18 @@
-; REGISTER				
-; Wenn LSB im register (RW Bit genannt) 0 -> Schreibzugriff, 1 -> Lesezugriff
-; Slave adresse beliebig außer 0000 000
-
 .include "m16adef.inc"
 
 .def RECEIVED_DATA_H = R25
 .def RECEIVED_DATA_L = R24
 
+; REGISTER				
+; Wenn LSB im register (RW Bit genannt) 0 -> Schreibzugriff, 1 -> Lesezugriff
+; Slave adresse beliebig außer 0000 000
 .equ SLA_W = 0b00000100
 .equ SLA_R = 0b00000101
 
 ;TODO DATA als register umsetzen, um Anfrage nach Temp oder Humidity in runtime zu ändern
+;TODO www.mikrocontroller.net/articles/Entprellung
 
-.equ DATA  = 0b00000000 ; DATA wäre dann 00000011 für Temperatur; 00000101 für Relative Humidity
+.equ DATA  = 0b00000101 ; DATA wäre dann 00000011 für Temperatur; 00000101 für Relative Humidity
 .equ START = $08
 .equ MT_SLA_ACK = $18
 .equ MT_DATA_ACK = $28
@@ -26,7 +26,6 @@
 .equ HUMIDITY_UB_H = 0b00000111 ; 
 .equ HUMIDITY_UB_L = 0b00101101 ; 1837
 
-	
 .org $000
     jmp RESET
 .org INT0addr
@@ -51,7 +50,8 @@ RESET:
 
 	; Falling edge of INT1, INT0 generates interrupt request
 	;ldi r16, (1<<ISC11) | (1<<ISC01)
-	ldi r16, (1<<ISC10) | (1<<ISC00)
+	ldi r16, (1<<ISC11) | (1<<ISC01)
+	;ldi r16, 0x00
 	out MCUCR, r16
 	
 	; Falling edge of INT2 generates interrupt request is by default
@@ -70,7 +70,7 @@ RESET:
 	ldi r16, 0b00001100
 	out PORTD, r16 ; Pullup Widerstand aktivieren bei INT0 INT1
 	
-	cbi DDRB, 2 
+	cbi DDRB, 2
 	sbi PORTB, 2 ; Das selbe für INT2
 
 	; configure 16bit-timer
@@ -81,11 +81,38 @@ RESET:
 
 	;ldi r16, (1<<OCIE1A) ; interrupt bei nem match zwischen counter und ocr1a
 	;out TIMSK, r16 ; Nicht enablen, um manuell abfragen zu können
+	
+	; SCL Frequency
+	ldi r16, 0xFF
+	out TWBR, r16
 
+	ldi r16, (1<<TWPS0) | (1<<TWPS1)
+	out TWSR, r16
 
 
 MAIN:
+/*
+	rcall TOGGLE_YELLOW_LED
+	rcall TWI_MASTER_TRANSMITTER
 	rcall DELAY_500MS
+	rcall TOGGLE_YELLOW_LED
+	rcall DELAY_500MS
+	rcall TOGGLE_YELLOW_LED
+	rcall TWI_MASTER_RECEIVER
+	rcall DELAY_500MS
+	rcall TOGGLE_YELLOW_LED
+	rcall DELAY_500MS
+	rcall TOGGLE_YELLOW_LED
+	rcall CALC_HUMIDITY
+	;rcall TOGGLE_YELLOW_LED
+	;rcall DELAY_500MS
+	;rcall TOGGLE_GREEN_LED
+	ldi r16, 0x00
+	out PORTA, r16*/
+
+	ldi r16, (1<<PORTA7) | (1<<PORTA5)
+	out PORTA, r16
+
 	rjmp MAIN
 
 /*
@@ -93,29 +120,55 @@ TIMER1_INTERRUPT_500MS:
 	nop
 reti
 */
+TOGGLE_RED_LED:
+	in r16, PINA
+	ldi r17, 0b00100000
+	eor r16, r17
+	out PORTA, r16
+ret
+
+TOGGLE_YELLOW_LED:
+	in r16, PINA
+	ldi r17, 0b01000000
+	eor r16, r17
+	out PORTA, r16
+ret
+
+TOGGLE_GREEN_LED:
+	in r16, PINA
+	ldi r17, 0b10000000
+	eor r16, r17
+	out PORTA, r16
+ret
 
 INT0_BUTTON_MIDDLE:
+	cli
 	; Toggle gelbe LED
 	in r16, PINA
 	ldi r17, 0b01000000
 	eor r16, r17
 	out PORTA, r16
+	sei
 reti
 
 INT1_BUTTON_RIGHT:
+	cli
 	; Toggle grüne LED
 	in r16, PINA
 	ldi r17, 0b10000000
 	eor r16, r17
 	out PORTA, r16
+	sei
 reti
 
 INT2_BUTTON_LEFT:
+	cli
 	; Toggle rote LED
 	in r16, PINA
 	ldi r17, 0b00100000
 	eor r16, r17
 	out PORTA, r16
+	sei
 reti
 
 DELAY_500MS:
@@ -197,8 +250,8 @@ CALC_HUMIDITY:
 		*/
 
 		/* TODO: bsp werte entfernen*/ 
-		ldi RECEIVED_DATA_H, 0b00000100
-		ldi RECEIVED_DATA_L, 0b00000101
+		;ldi RECEIVED_DATA_H, 0b00000100
+		;ldi RECEIVED_DATA_L, 0b00000101
 
 		cpi RECEIVED_DATA_H, HUMIDITY_LB_H ; Erst High bits der unteren Grenze checken
 		brlo BAD_LED_STATE 				   ; Branch if Lower (Unsigned) | Wenn data < humidity -> LED ROT 
@@ -230,11 +283,29 @@ ret
 
 
 BAD_LED_STATE:
-;TODO
+	
+	cli
+	; Toggle grüne LED
+	in r16, PINA
+	ldi r17, 0b10000000
+	eor r16, r17
+	out PORTA, r16
+	sei
+	rcall DELAY_500MS
+	rjmp BAD_LED_STATE
 ret
 
 GOOD_LED_STATE:
-;TODO
+	cli
+	; Toggle grüne LED
+	in r16, PINA
+	ldi r17, 0b10000000
+	eor r16, r17
+	out PORTA, r16
+	sei
+	rcall DELAY_500MS
+	rjmp GOOD_LED_STATE
+	
 ret
 
 
@@ -245,70 +316,73 @@ ret
 	
 ;---------Begin TWI_MASTER_TRANSMITTER-----------------
 TWI_MASTER_TRANSMITTER:
-; Send START Condiditon
+	push r16
+
+	rcall TOGGLE_RED_LED
+	rcall DELAY_500MS
+
+	; Send START Condiditon
 	ldi r16, (1<<TWINT) | (1<<TWSTA) | (1<<TWEN) 
 	out TWCR, r16
 
-; Wait for TWINT Flag set. This indicates that the START condition has been transmitted
-/*wait1:
-	in r16,TWCR
-	sbrs r16,TWINT ; SBRS Skip if Bit in Register is Set 
-	rjmp wait1*/
-	rcall wait_TWINT
+	rcall TOGGLE_RED_LED
+	rcall DELAY_500MS
 	
-; Check value of TWI Status Register. Mask prescaler bits. If status different from START go to ERROR
+	rcall TOGGLE_RED_LED
+	
+	; Wait for TWINT Flag set. This indicates that the START condition has been transmitted
+	rcall wait_TWINT
+
+	rcall TOGGLE_RED_LED
+	rcall DELAY_500MS
+
+	; Check value of TWI Status Register. Mask prescaler bits. If status different from START go to ERROR
 	in r16,TWSR
 	andi r16, 0xF8	; ver-und-en + in R16 speichern
 	cpi r16, START	; compare immediate um branch if not equal auszuführen in nächster zeile
 	brne ERROR
 
-; Load SLA_W into TWDR Register. Clear TWINT bit in TWCR to start transmission of address
+	; Load SLA_W into TWDR Register. Clear TWINT bit in TWCR to start transmission of address
 	ldi r16, SLA_W
 	out TWDR, r16 
 	ldi r16, (1<<TWINT) | (1<<TWEN)
 	out TWCR, r16
 
-; Wait for TWINT Flag set. This indicates that the SLA+W has been transmitted, and ACK/NACK has been received.
-/*wait2:
-	in r16,TWCR
-	sbrs r16,TWINT
-	rjmp wait2*/
+	; Wait for TWINT Flag set. This indicates that the SLA+W has been transmitted, and ACK/NACK has been received.
 	rcall wait_TWINT
 
-; Check value of TWI Status Register. Mask prescaler bits. If status different from MT_SLA_ACK go to ERROR
+	; Check value of TWI Status Register. Mask prescaler bits. If status different from MT_SLA_ACK go to ERROR
 	in r16,TWSR
 	andi r16, 0xF8
 	cpi r16, MT_SLA_ACK
 	brne ERROR
 
-; Load DATA into TWDR Register. Clear TWINT bit in TWCR to start transmission of data
+	; Load DATA into TWDR Register. Clear TWINT bit in TWCR to start transmission of data
 	ldi r16, DATA
 	out TWDR, r16       
 	ldi r16, (1<<TWINT) | (1<<TWEN)
 	out TWCR, r16
 
-; Wait for TWINT Flag set. This indicates that the DATA has been transmitted, and ACK/NACK has been received.
-/*wait3:
-	in r16,TWCR
-	sbrs r16,TWINT
-	rjmp wait3*/
+	; Wait for TWINT Flag set. This indicates that the DATA has been transmitted, and ACK/NACK has been received.
 	rcall wait_TWINT
 
-; Check value of TWI Status Register. Mask prescaler bits. If status different from MT_DATA_ACK go to ERROR
+	; Check value of TWI Status Register. Mask prescaler bits. If status different from MT_DATA_ACK go to ERROR
 	in r16,TWSR
 	andi r16, 0xF8
 	cpi r16, MT_DATA_ACK
 	brne ERROR
 
-; Transmit STOP condition
+	; Transmit STOP condition
 	ldi r16, (1<<TWINT)|(1<<TWEN)|(1<<TWSTO)
 	out TWCR, r16 
 
+	pop r16
 ret
 ;----------End TWI_MASTER_TRANSMITTER-----------
 
 ;---------Begin TWI_MASTER_RECEIVER-----------------
 TWI_MASTER_RECEIVER:
+	push r16
 	;START
 	ldi r16, (1<<TWINT) | (1<<TWSTA) | (1<<TWEN)
 	out TWCR, r16
@@ -366,18 +440,26 @@ TWI_MASTER_RECEIVER:
 	; Daten lesen
 	in RECEIVED_DATA_L, TWDR
 
+	; TODO eventuell checken?
 
 	; Transmit STOP condition
 	ldi r16, (1<<TWINT)|(1<<TWEN)|(1<<TWSTO)
 	out TWCR, r16 
 
+	pop r16
 ret
 ;----------End TWI_MASTER_RECEIVER-----------
 
 
+
+
 ;-- ATmega16A datasheet, seite 185 als referenz  
 
-ERROR: nop
+ERROR: 
+	ldi r16, 0b11100000
+	out PORTA, r16
+	looppp:
+		rjmp looppp
 
 
 ;-------------------------------------------------
@@ -388,6 +470,26 @@ wait_TWINT:
 	rjmp wait_TWINT
 ret
 ;-------------------------------------------------
+
+
+; TWI FUNKTIONIERT NICHT, DAHER FOLGENDES:
+;DELAY_11MS
+; PC1 SDA (DATA Pin am Sensor), PC0 SCL(SCK)
+SEND_SENSOR:
+	; DATA high
+	ldi r16, (1<<PORTC1)
+	out PORTC, r16
+	
+	; SCK HIGH
+	ldi r16, (1<<PORTC0)
+	out PORTC, r16
+
+	; lowering of the DATA line while SCK remains high
+	ldi r16, (1<<PORT0) | (1<<PORTC1) 
+	out PORTC, r16
+
+	; low pulse of sck
+	ldi r16, 
 
 
 /*
