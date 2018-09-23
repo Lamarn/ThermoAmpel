@@ -1,30 +1,42 @@
 .include "m16adef.inc"
 
-.def RECEIVED_DATA_H = R25
-.def RECEIVED_DATA_L = R24
+.def CHECKSUM = R25
+.def RECEIVED_BYTE = R24
+.def RECEIVED_DATA_H = R23
+.def RECEIVED_DATA_L = R22
+.def MODE = R21
+.def MEAS_LB_H = R4 
+.def MEAS_LB_L = R5
+.def MEAS_UB_H = R6
+.def MEAS_UB_L = R7
 
-; REGISTER				
-; Wenn LSB im register (RW Bit genannt) 0 -> Schreibzugriff, 1 -> Lesezugriff
-; Slave adresse beliebig außer 0000 000
-.equ SLA_W = 0b00000100
-.equ SLA_R = 0b00000101
 
-;TODO DATA als register umsetzen, um Anfrage nach Temp oder Humidity in runtime zu ändern
 ;TODO www.mikrocontroller.net/articles/Entprellung
 
-.equ DATA  = 0b00000101 ; DATA wäre dann 00000011 für Temperatur; 00000101 für Relative Humidity
-.equ START = $08
-.equ MT_SLA_ACK = $18
-.equ MT_DATA_ACK = $28
-.equ MR_SLA_ACK = $40
-.equ MR_DATA_ACK = $50
-.equ MR_DATA_NACK = $58
-
 .equ HUMIDITY_LB_H = 0b00000100 ; LB = Lowerbound, H = Highbits
-.equ HUMIDITY_LB_L = 0b00000101 ; L = Lowbits | Dec. Wert = 1029
+.equ HUMIDITY_LB_L = 0b00000101 ; L = Lowbits | Dec. Wert = 1029 - 40RH
 
 .equ HUMIDITY_UB_H = 0b00000111 ; 
-.equ HUMIDITY_UB_L = 0b00101101 ; 1837
+.equ HUMIDITY_UB_L = 0b00101101 ; 1837 -  60RH
+
+
+/*
+.equ HUMIDITY_LB_H = 0b00010011; LB = Lowerbound, H = Highbits
+.equ HUMIDITY_LB_L = 0b10010010 ; L = Lowbits | Dec. Wert = 5010 = 10°
+*/
+
+/*
+.equ HUMIDITY_LB_H = 0b00010111; LB = Lowerbound, H = Highbits
+.equ HUMIDITY_LB_L = 0b01111010 ; L = Lowbits | Dec. Wert = 6010 = 20°
+*/
+
+/*
+.equ TEMPERATURE_LB_H = 0b00010111; LB = Lowerbound, H = Highbits
+.equ TEMPERATURE_LB_L = 0b01111010 ; L = Lowbits | Dec. Wert = 6010 = 20°
+
+.equ TEMPERATURE_UB_H = 0b00011010 ; 
+.equ TEMPERATURE_UB_L = 0b10100110 ; 6310 = 23°
+*/
 
 .org $000
     jmp RESET
@@ -89,59 +101,85 @@ RESET:
 	ldi r16, (1<<TWPS0) | (1<<TWPS1)
 	out TWSR, r16
 
+	ldi r16, 0x00
+	mov RECEIVED_DATA_H, r16
+	mov RECEIVED_DATA_L, r16
+
 
 MAIN:
-/*
-	rcall TOGGLE_YELLOW_LED
-	rcall TWI_MASTER_TRANSMITTER
+	ldi MODE, 0b00000101; 0b00000011 für Temp, 0b00000101 für Humidity
+	rcall SEND_SENSOR
+	rcall CALC_HUMIDITY ; gerade auf temperatur eingestellt
+	cont_main:
+	rcall DELAY_500MS ; Maximum eine measurement pro sekunde bei 12 bit messungen
+	rcall DELAY_500MS ; daher lieber 2 sekunden warten vor neuer messung
 	rcall DELAY_500MS
-	rcall TOGGLE_YELLOW_LED
 	rcall DELAY_500MS
-	rcall TOGGLE_YELLOW_LED
-	rcall TWI_MASTER_RECEIVER
-	rcall DELAY_500MS
-	rcall TOGGLE_YELLOW_LED
-	rcall DELAY_500MS
-	rcall TOGGLE_YELLOW_LED
-	rcall CALC_HUMIDITY
-	;rcall TOGGLE_YELLOW_LED
-	;rcall DELAY_500MS
-	;rcall TOGGLE_GREEN_LED
-	ldi r16, 0x00
-	out PORTA, r16*/
 
-	ldi r16, (1<<PORTA7) | (1<<PORTA5)
-	out PORTA, r16
+rjmp MAIN
 
-	rjmp MAIN
 
-/*
-TIMER1_INTERRUPT_500MS:
-	nop
-reti
-*/
+TOGGLE_ALL_LED:
+	rcall TOGGLE_RED_LED
+	rcall TOGGLE_YELLOW_LED
+	rcall TOGGLE_GREEN_LED
+ret
+
 TOGGLE_RED_LED:
+	push r16
+	push r17
+
 	in r16, PINA
 	ldi r17, 0b00100000
 	eor r16, r17
 	out PORTA, r16
+
+	pop r17
+	pop r16
 ret
 
 TOGGLE_YELLOW_LED:
+	push r16
+	push r17
+
 	in r16, PINA
 	ldi r17, 0b01000000
 	eor r16, r17
 	out PORTA, r16
+
+	pop r17
+	pop r16
 ret
 
 TOGGLE_GREEN_LED:
+	push r16
+	push r17
+
 	in r16, PINA
 	ldi r17, 0b10000000
 	eor r16, r17
 	out PORTA, r16
+
+	pop r17
+	pop r16
+ret
+
+ON_RED_LED:
+	sbi PORTA, PORTA5
+ret
+
+ON_RED_YELLOW:
+	sbi PORTA, PORTA6
+ret
+
+ON_RED_GREEN:
+	sbi PORTA, PORTA7
 ret
 
 INT0_BUTTON_MIDDLE:
+	push r16
+	push r17
+
 	cli
 	; Toggle gelbe LED
 	in r16, PINA
@@ -149,9 +187,15 @@ INT0_BUTTON_MIDDLE:
 	eor r16, r17
 	out PORTA, r16
 	sei
+
+	pop r17
+	pop r16
 reti
 
 INT1_BUTTON_RIGHT:
+	push r16
+	push r17
+
 	cli
 	; Toggle grüne LED
 	in r16, PINA
@@ -159,9 +203,15 @@ INT1_BUTTON_RIGHT:
 	eor r16, r17
 	out PORTA, r16
 	sei
+
+	pop r17
+	pop r16
 reti
 
 INT2_BUTTON_LEFT:
+	push r16
+	push r17
+
 	cli
 	; Toggle rote LED
 	in r16, PINA
@@ -169,9 +219,15 @@ INT2_BUTTON_LEFT:
 	eor r16, r17
 	out PORTA, r16
 	sei
+
+	pop r17
+	pop r16
 reti
 
 DELAY_500MS:
+	push r16
+	push r17
+
 	; lade 31250 in compare register, weil 1/(4000000/64) * 31250 = 0.5
 	ldi r17, 0b01111010
 	ldi r16, 0b00010010 
@@ -184,14 +240,22 @@ DELAY_500MS:
 	loop:
 		in r16, TIFR
 		sbrs r16, OCF1A ; SBRS Skip if Bit in Register is Set 
-		rjmp loop
+	rjmp loop
 	
 	; reset match bit
 	ldi r16, (1<<OCF1A) 
 	out TIFR, r16
+
+	pop r17
+	pop r16
+
 ret
 		
 RESET_16BITCOUNTER:
+	push r16
+	push r17
+	push r18
+
 	; Schreiben in counter muss atomar geschehen, daher interrupt disablen
 	; Schreiben geschieht vom High to Lowbyte, lesen andersrum
 	ldi r17, 0x00
@@ -205,6 +269,10 @@ RESET_16BITCOUNTER:
 	out TCNT1L,r16
 	; Restore global interrupt flag
 	out SREG,r18
+	
+	pop r18
+	pop r17
+	pop r16
 ret
 
 
@@ -224,6 +292,7 @@ x = 6310
 
 ;---------Begin CALC_HUMIDITY-----------------
 CALC_HUMIDITY:
+		push r16
 		/*Gutes RH im Wohnzimmer zwischen 40-60%
 		40 = -2.0468 + 0.0367 * x - 1.5955*10^(-6) * x²
 		x = 1029
@@ -252,6 +321,12 @@ CALC_HUMIDITY:
 		/* TODO: bsp werte entfernen*/ 
 		;ldi RECEIVED_DATA_H, 0b00000100
 		;ldi RECEIVED_DATA_L, 0b00000101
+		;cpi RECEIVED_DATA_L, HUMIDITY_UB_L
+		;brlo BAD_LED_STATE ;hier
+		;rcall GOOD_LED_STATE
+
+		; cpi RECEIVED_DATA_H, 0x00
+		; breq test_state ;hier
 
 		cpi RECEIVED_DATA_H, HUMIDITY_LB_H ; Erst High bits der unteren Grenze checken
 		brlo BAD_LED_STATE 				   ; Branch if Lower (Unsigned) | Wenn data < humidity -> LED ROT 
@@ -262,10 +337,22 @@ CALC_HUMIDITY:
 		cp r16, RECEIVED_DATA_H ; wenn r16 < data -> LED ROT
 		brlo BAD_LED_STATE
 		breq maybe_bad_state2
-
 	continue_calc_humidity2:
 		rjmp GOOD_LED_STATE
+				
+	continue_calc_humidity3:
+		pop r16
+		rjmp cont_main
 ret 
+
+
+test_state:
+	rcall TOGGLE_ALL_LED
+	rcall DELAY_500MS
+	rcall TOGGLE_ALL_LED
+	rcall DELAY_500MS
+	rjmp test_state
+ret
 
 maybe_bad_state:
 	cpi RECEIVED_DATA_L, HUMIDITY_LB_L ; Dann Low bits der unteren Grenze checken
@@ -274,6 +361,7 @@ maybe_bad_state:
 ret
 
 maybe_bad_state2:
+	push r16
 	ldi r16, HUMIDITY_UB_L
 	cp r16, RECEIVED_DATA_L
 	brlo BAD_LED_STATE
@@ -283,214 +371,485 @@ ret
 
 
 BAD_LED_STATE:
-	
-	cli
-	; Toggle grüne LED
-	in r16, PINA
-	ldi r17, 0b10000000
-	eor r16, r17
-	out PORTA, r16
-	sei
+	; Toggle rote LED
+	rcall TOGGLE_RED_LED
 	rcall DELAY_500MS
-	rjmp BAD_LED_STATE
+	rcall TOGGLE_RED_LED
+	rjmp continue_calc_humidity3
 ret
 
 GOOD_LED_STATE:
-	cli
 	; Toggle grüne LED
-	in r16, PINA
-	ldi r17, 0b10000000
-	eor r16, r17
-	out PORTA, r16
-	sei
+	rcall TOGGLE_GREEN_LED
 	rcall DELAY_500MS
-	rjmp GOOD_LED_STATE
-	
+	rcall TOGGLE_GREEN_LED
+	rjmp continue_calc_humidity3
 ret
 
 
-; Infos zu Bits
-	; TWINT: TWI Interrupt Flag				| This bit is set by hardware when the TWI has finished its current job and expects application software response
-	; TWSTA: TWSTA: TWI START Condition Bit | The application writes the TWSTA bit to one when it desires to become a Master on the Two-wire Serial Bus.
-	; TWEN: TWI Enabled Bit					| The TWEN bit enables TWI operation and activates the TWI interface.
-	
-;---------Begin TWI_MASTER_TRANSMITTER-----------------
-TWI_MASTER_TRANSMITTER:
-	push r16
-
-	rcall TOGGLE_RED_LED
-	rcall DELAY_500MS
-
-	; Send START Condiditon
-	ldi r16, (1<<TWINT) | (1<<TWSTA) | (1<<TWEN) 
-	out TWCR, r16
-
-	rcall TOGGLE_RED_LED
-	rcall DELAY_500MS
-	
-	rcall TOGGLE_RED_LED
-	
-	; Wait for TWINT Flag set. This indicates that the START condition has been transmitted
-	rcall wait_TWINT
-
-	rcall TOGGLE_RED_LED
-	rcall DELAY_500MS
-
-	; Check value of TWI Status Register. Mask prescaler bits. If status different from START go to ERROR
-	in r16,TWSR
-	andi r16, 0xF8	; ver-und-en + in R16 speichern
-	cpi r16, START	; compare immediate um branch if not equal auszuführen in nächster zeile
-	brne ERROR
-
-	; Load SLA_W into TWDR Register. Clear TWINT bit in TWCR to start transmission of address
-	ldi r16, SLA_W
-	out TWDR, r16 
-	ldi r16, (1<<TWINT) | (1<<TWEN)
-	out TWCR, r16
-
-	; Wait for TWINT Flag set. This indicates that the SLA+W has been transmitted, and ACK/NACK has been received.
-	rcall wait_TWINT
-
-	; Check value of TWI Status Register. Mask prescaler bits. If status different from MT_SLA_ACK go to ERROR
-	in r16,TWSR
-	andi r16, 0xF8
-	cpi r16, MT_SLA_ACK
-	brne ERROR
-
-	; Load DATA into TWDR Register. Clear TWINT bit in TWCR to start transmission of data
-	ldi r16, DATA
-	out TWDR, r16       
-	ldi r16, (1<<TWINT) | (1<<TWEN)
-	out TWCR, r16
-
-	; Wait for TWINT Flag set. This indicates that the DATA has been transmitted, and ACK/NACK has been received.
-	rcall wait_TWINT
-
-	; Check value of TWI Status Register. Mask prescaler bits. If status different from MT_DATA_ACK go to ERROR
-	in r16,TWSR
-	andi r16, 0xF8
-	cpi r16, MT_DATA_ACK
-	brne ERROR
-
-	; Transmit STOP condition
-	ldi r16, (1<<TWINT)|(1<<TWEN)|(1<<TWSTO)
-	out TWCR, r16 
-
-	pop r16
-ret
-;----------End TWI_MASTER_TRANSMITTER-----------
-
-;---------Begin TWI_MASTER_RECEIVER-----------------
-TWI_MASTER_RECEIVER:
-	push r16
-	;START
-	ldi r16, (1<<TWINT) | (1<<TWSTA) | (1<<TWEN)
-	out TWCR, r16
-
-	rcall wait_TWINT
-
-	; Check value of TWI Status Register. Mask prescaler bits. If status different from START go to ERROR
-	in r16,TWSR
-	andi r16, 0xF8	; ver-und-en + in R16 speichern
-	cpi r16, START	; compare immediate um branch if not equal auszuführen in nächster zeile
-	brne ERROR
-
-	; Load SLA_R into TWDR Register. Clear TWINT bit in TWCR to start transmission of address
-	ldi r16, SLA_R
-	out TWDR, r16 
-	ldi r16, (1<<TWINT) | (1<<TWEN)
-	out TWCR, r16
-
-	rcall wait_TWINT
-
-	; Check value of TWI Status Register. Mask prescaler bits. If status different from MR_SLA_ACK go to ERROR
-	in r16,TWSR
-	andi r16, 0xF8
-	cpi r16, MR_SLA_ACK
-	brne ERROR
-
-	; Clear TWINT bit in TWCR to start transmission of data 
-	ldi r16, (1<<TWINT) | (1<<TWEA) | (1<<TWEN) ; TWEA 1 um ACK zu senden
-	out TWCR, r16
-
-	; Wait for TWINT Flag set. This indicates that the DATA has been transmitted, and ACK/NACK has been received.
-	rcall wait_TWINT
-
-	; Check value of TWI Status Register. Mask prescaler bits. If status different from MR_DATA_ACK go to ERROR
-	in r16,TWSR
-	andi r16, 0xF8
-	cpi r16, MR_DATA_ACK ; Bedeutet Data Byte empfangen und ACK zurückgesendet
-	brne ERROR
-
-	; Daten lesen
-	in RECEIVED_DATA_H, TWDR
-
-	;Noch ein Byte empfangen
-	; senden "NOT ACK" (TWEA=0) für letztes Daten-Byte 
-	ldi r16, (1<<TWINT) | (0<<TWEA)  | (1<<TWEN)
-	out TWCR, r16
-
-	rcall wait_TWINT
-
-	in r16,TWSR
-	andi r16, 0xF8
-	cpi r16, MR_DATA_NACK ; Bedeutet (letztes) Data Byte empfangen und NACK zurückgesendet
-	brne ERROR
-
-	; Daten lesen
-	in RECEIVED_DATA_L, TWDR
-
-	; TODO eventuell checken?
-
-	; Transmit STOP condition
-	ldi r16, (1<<TWINT)|(1<<TWEN)|(1<<TWSTO)
-	out TWCR, r16 
-
-	pop r16
-ret
-;----------End TWI_MASTER_RECEIVER-----------
-
-
-
-
-;-- ATmega16A datasheet, seite 185 als referenz  
-
-ERROR: 
-	ldi r16, 0b11100000
-	out PORTA, r16
-	looppp:
-		rjmp looppp
-
-
-;-------------------------------------------------
-; WARTEN, bis TWINT Flag gesetzt ist 
-wait_TWINT:
-	in r16, TWCR
-	sbrs r16, TWINT ; SBRS Skip if Bit in Register is Set 
-	rjmp wait_TWINT
-ret
-;-------------------------------------------------
 
 
 ; TWI FUNKTIONIERT NICHT, DAHER FOLGENDES:
 ;DELAY_11MS
 ; PC1 SDA (DATA Pin am Sensor), PC0 SCL(SCK)
 SEND_SENSOR:
+	; als output setzen
+	sbi DDRC, PORTC1
+	sbi DDRC, PORTC0
+	rcall RESET_SEQUENCE
+
+	; Transmission Start
 	; DATA high
-	ldi r16, (1<<PORTC1)
-	out PORTC, r16
-	
+	sbi PORTC, PORTC1
+	nop
+	nop
+
+
+	; SCK LOW
+	cbi PORTC, PORTC0
+	nop 
+	nop 
+
 	; SCK HIGH
-	ldi r16, (1<<PORTC0)
-	out PORTC, r16
+	sbi PORTC, PORTC0
+	nop 
+	nop
 
 	; lowering of the DATA line while SCK remains high
-	ldi r16, (1<<PORT0) | (1<<PORTC1) 
-	out PORTC, r16
+	cbi PORTC, PORTC1
+	nop
+	nop
 
-	; low pulse of sck
-	ldi r16, 
+	; low pulse of SCK
+	cbi PORTC, PORTC0
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
 
+	; SCK high again
+	sbi PORTC, PORTC0
+	nop
+	nop
+
+	; raising DATA again while sck is still high
+	sbi PORTC, PORTC1
+	nop
+	nop
+
+	; SCK low
+	cbi PORTC, PORTC0
+
+	; WRITE what you want
+	; first enable writing (data als output)
+	sbi DDRC, PORTC1
+	nop
+
+	rcall SEND_COMMAND ; HIER
+	; disable data to read ACK
+	rcall DISABLE_DATA
+
+	nop
+
+	; clock high
+	sbi PORTC, PORTC0
+	nop
+	nop
+
+	; read ACK
+	in r16, PINC
+
+	; clock low
+	cbi PORTC, PORTC0
+
+	; check ob ACK gekommen ist
+	sbrc r16, PORTC1
+	rcall ERROR_NO_ACK
+
+
+	; zum read nötig
+	rcall DISABLE_DATA
+	
+	; warte bis data ready ist, wenn ready ist wird data auf low gesetzt
+	; eigentlich dauerts 80 ms aber so geht auch
+	wait_data:
+		in r16, PINC
+		sbrc r16, PORTC1
+	rjmp wait_data
+	
+	; read first high bits
+	rcall READ_BYTE
+	mov RECEIVED_DATA_H, RECEIVED_BYTE 
+	
+	; read lower bits
+	rcall READ_BYTE
+	mov RECEIVED_DATA_L, RECEIVED_BYTE
+	
+	; read checksum, kann man skippen wenn man es nicht benutzt
+	rcall READ_BYTE
+	mov CHECKSUM, RECEIVED_BYTE
+
+	/*	
+	rcall ENABLE_DATA
+	; DATA HIGH
+	sbi PORTC, PORTC1
+
+	rcall CLOCK_HIGH_LOW
+	*/
+ret
+
+/*
+checksum_error:
+	rcall TOGGLE_RED_LED
+ret
+*/
+ERROR_NO_ACK:
+	rcall TOGGLE_RED_LED
+	rcall DELAY_500MS
+	rcall TOGGLE_YELLOW_LED
+	rcall DELAY_500MS
+	rcall TOGGLE_GREEN_LED
+	rcall DELAY_500MS
+	rcall TOGGLE_ALL_LED
+ret
+
+READ_BYTE:
+	push r16
+	push r17
+	push r18
+
+	ldi r16, 0x08
+	ldi r18, 0x00
+	loop2:
+		lsl r18
+		; clock high
+		sbi PORTC, PORTC0
+		nop 
+		nop
+	
+		in r17, PINC
+		SBRC r17, PINC1
+		; Wenn 1 gefunden wird +1 und nach links schieben, sonst nur nach links schieben
+		inc r18
+
+		; clock low
+		cbi PORTC, PORTC0
+		nop
+		nop
+
+		dec r16
+	brne loop2
+
+	mov RECEIVED_BYTE, r18
+
+	; send ACK
+	rcall ENABLE_DATA
+	nop
+
+	; data low
+	cbi PORTC, PORTC1
+	nop
+
+	; clock high
+	sbi PORTC, PORTC0
+	nop
+	nop
+	nop
+
+	; clock low
+	cbi PORTC, PORTC0
+	nop
+	nop
+	
+	rcall DISABLE_DATA
+
+	pop r18
+	pop r17
+	pop r16
+ret
+
+DISABLE_DATA:
+	; Macht data als eingang und pull up hoch
+	cbi DDRC, PORTC1
+	sbi PORTC, PORTC1
+ret
+
+ENABLE_DATA:
+	sbi DDRC, PORTC1
+ret
+
+
+ClOCK_HIGH_LOW:
+	; Clock hoch und tiefsetzen für übertragung
+	sbi PORTC, PORTC0
+	nop
+	nop
+	cbi PORTC, PORTC0
+	nop
+	nop
+ret
+
+RESET_SEQUENCE:
+
+	push r16
+
+	rcall ENABLE_DATA
+	nop
+
+	; data high
+	sbi PORTC, PORTC1
+
+	; clock low for pulses
+	cbi PORTC, PORTC0
+
+	; 9x clock high - low senden
+	ldi r16, 0x09
+	loop_pulses:
+		rcall CLOCK_HIGH_LOW
+		dec r16
+	brne loop_pulses
+
+
+	pop r16
+ret
+
+	
+SEND_HUMIDITY_REQ:
+	
+	; 1. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+	
+	; 2. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 3. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 4. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 5. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 6. Übertragen: 1
+	sbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 7. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 8. Übertragen: 1
+	sbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+ret
+
+SEND_TEMPERATURE_REQ:
+	
+	; 1. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+	
+	; 2. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 3. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 4. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 5. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 6. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 7. Übertragen: 1
+	sbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 8. Übertragen: 1
+	sbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+ret
+
+SEND_SOFTRESET_REQ:
+	
+	; 1. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+	
+	; 2. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 3. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 4. Übertragen: 1
+	sbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 5. Übertragen: 1
+	sbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 6. Übertragen: 1
+	sbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 7. Übertragen: 1
+	sbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	; 8. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+
+	;11ms delay bei softreset nötig
+	rcall DELAY_500MS
+
+ret
+
+SEND_COMMAND:
+	push r16
+	push r17
+	push r18
+
+	ldi r16, 0x08
+	ldi r17, 0x80
+
+	loop_command:
+		; Setze Mode auf veränderbarem register
+		mov r18, MODE
+		
+		; maskiere bit für bit
+		and r18, r17
+
+		; wenn maskiertes byte + maskierung gleich -> dann sende 1
+		cp r18, r17
+
+		breq send_one
+		brne send_zero
+		cont_loop_command:
+		; maskierung nach rechts schieben
+		lsr r17
+
+		dec r16
+	brne loop_command
+
+	pop r18
+	pop r17
+	pop r16
+
+ret
+
+send_one:
+	; Übertragen: 1
+	sbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW	
+	
+	rjmp cont_loop_command
+ret
+
+send_zero:
+	; 3. Übertragen: 0
+	cbi PORTC, PORTC1
+
+	; Clock hoch und tiefsetzen für übertragung
+	rcall CLOCK_HIGH_LOW
+	
+	rjmp cont_loop_command
+ret
+/* Für "debug" zwecke
+RECEIVED_ACK:
+	rcall TOGGLE_GREEN_LED
+	rcall DELAY_500MS
+	rcall DELAY_500MS
+	rcall TOGGLE_GREEN_LED
+	rcall DELAY_500MS
+	rcall DELAY_500MS
+	rcall TOGGLE_GREEN_LED
+	rjmp main
+ret
+
+DISMISSED_ACK:
+	rcall TOGGLE_RED_LED
+	rcall DELAY_500MS
+	rcall DELAY_500MS
+	rcall TOGGLE_RED_LED
+	rcall DELAY_500MS
+	rcall DELAY_500MS
+	rcall TOGGLE_RED_LED
+	rjmp main
+ret
+*/ 
 
 /*
 ;***************************************************************************
