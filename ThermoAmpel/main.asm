@@ -1,5 +1,7 @@
 .include "m16adef.inc"
 
+
+
 .def CHECKSUM = R25
 .def RECEIVED_BYTE = R24
 .def RECEIVED_DATA_H = R23
@@ -35,6 +37,8 @@
 .equ TEMPERATURE_UB_L = 0b10100110 ; 6310 = 23°
 */
 
+
+.cseg
 .org $000
     jmp RESET
 .org INT0addr
@@ -101,6 +105,7 @@ RESET:
 	;damit sensor funktioniert ist nach power-up oder softresetkommando 11 ms delay nötig
 	rcall DELAY_500MS
 
+
 MAIN:
 	ldi MODE, HUMIDITY_MODE; 0b00000011 für Temp, 0b00000101 für Humidity
 	rcall LOAD_HUM_BOUNDS
@@ -109,7 +114,7 @@ MAIN:
 	cont_main:
 	rcall DELAY_500MS ; Maximum eine measurement pro sekunde bei 12 bit messungen
 	rcall DELAY_500MS ; 
-	
+
 	ldi MODE, TEMPERATURE_MODE; 0b00000011 für Temp, 0b00000101 für Humidity
 	rcall LOAD_TEMP_BOUNDS
 	rcall SEND_SENSOR
@@ -117,8 +122,68 @@ MAIN:
 	cont_main2:
 	rcall DELAY_500MS
 	rcall DELAY_500MS
-
+	
 rjmp MAIN
+
+
+TEMPERATURE_CONVERSION:
+	ldi ZL, low(2*LUT_Temperature)
+	ldi ZH, high(2*LUT_Temperature) ; LUT-Adresse laden
+	rcall divide_data_by_64 ; Data auf 8 Bit richten
+	mov r16, RECEIVED_DATA_L 
+	ldi r17, 0x00
+	add ZL, r16 ; Auf den Tabelleneintrag springen
+	adc ZH, r17 ; Übertrag addieren
+	lpm RECEIVED_DATA_L, Z ; Ergebnis in R_D_L laden
+ret
+
+
+divide_data_by_64:
+	; Für Temperatur
+	lsr RECEIVED_DATA_H 
+	ror RECEIVED_DATA_L ; /2
+
+	lsr RECEIVED_DATA_H 
+	ror RECEIVED_DATA_L ; /2 /2 (=/4)
+
+	lsr RECEIVED_DATA_H 
+	ror RECEIVED_DATA_L ; /2 /2 /2 (=/8)
+
+	lsr RECEIVED_DATA_H 
+	ror RECEIVED_DATA_L ; /2 /2 /2 /2 (=/16)
+
+	lsr RECEIVED_DATA_H 
+	ror RECEIVED_DATA_L ; /2 /2 /2 /2 /2 (=/32)
+
+	lsr RECEIVED_DATA_H 
+	ror RECEIVED_DATA_L ; /2 /2 /2 /2 /2 /2 (=/64)
+ret
+
+HUMIDITY_CONVERSION:
+	ldi ZL, low(2*LUT_Humidity)
+	ldi ZH, high(2*LUT_Humidity) ; LUT-Adresse laden
+	rcall divide_data_by_16 ; Data auf 8 Bit richten
+	mov r16, RECEIVED_DATA_L 
+	ldi r17, 0x00
+	add ZL, r16 ; Auf den Tabelleneintrag springen
+	adc ZH, r17 ; Übertrag addieren
+	lpm RECEIVED_DATA_L, Z ; Ergebnis in R_D_L laden
+ret
+
+divide_data_by_16:
+	; Für Humidity
+	lsr RECEIVED_DATA_H
+	ror RECEIVED_DATA_L ; /2
+
+	lsr RECEIVED_DATA_H 
+	ror RECEIVED_DATA_L ; /2 /2 (=/4)
+
+	lsr RECEIVED_DATA_H 
+	ror RECEIVED_DATA_L ; /2 /2 /2 (=/8)
+
+	lsr RECEIVED_DATA_H 
+	ror RECEIVED_DATA_L ; /2 /2 /2 /2 (=/16)
+ret
 
 ; Grenzen für Relative Luftfeuchtigkeit in die dafür vorgesehenen Register laden
 LOAD_HUM_BOUNDS:
@@ -126,9 +191,8 @@ LOAD_HUM_BOUNDS:
 
 	ldi r16, 0b00000100
 	mov MEAS_LB_H, r16
-	ldi r16, 0b00000101 ; L = Lowbits | Dec. Wert = 1029 - 40RH
+	ldi r16, 0b10111001 ; L = Lowbits | Dec. Wert = 1209 - 40RH
 	mov MEAS_LB_L, r16
-
 	ldi r16, 0b00000111 ;
 	mov MEAS_UB_H, r16 
 	ldi r16, 0b00101101 ; 1837 -  60RH
@@ -233,42 +297,44 @@ OFF_GREEN_LED:
 ret
 
 INT0_BUTTON_MIDDLE:
+	cli
 	push r16
 	push r17
 
-	cli
 	; Toggle gelbe LED
 	in r16, PINA
 	ldi r17, 0b01000000
 	eor r16, r17
 	out PORTA, r16
-	sei
+
 
 	pop r17
 	pop r16
+	sei
 reti
 
 INT1_BUTTON_RIGHT:
+	cli
 	push r16
 	push r17
 
-	cli
+
 	; Toggle grüne LED
 	in r16, PINA
 	ldi r17, 0b10000000
 	eor r16, r17
 	out PORTA, r16
-	sei
 
 	pop r17
 	pop r16
+	sei
 reti
 
 INT2_BUTTON_LEFT:
+	cli
 	push r16
 	push r17
 
-	cli
 	; Toggle rote LED
 	in r16, PINA
 	ldi r17, 0b00100000
@@ -278,7 +344,34 @@ INT2_BUTTON_LEFT:
 
 	pop r17
 	pop r16
+	sei
 reti
+
+DELAY_24MS:
+	push r16
+	push r17
+
+	; lade 31250 in compare register, weil 1/(4000000/64) * 1500 = 0.024
+	ldi r17, 0b00000101
+	ldi r16, 0b11011100
+	out OCR1AH, r17
+	out OCR1AL, r16 
+
+	; starte counter bei 0
+	rcall RESET_16BITCOUNTER
+
+	loop_24:
+		in r16, TIFR
+		sbrs r16, OCF1A ; SBRS Skip if Bit in Register is Set 
+	rjmp loop_24
+	
+	; reset match bit
+	ldi r16, (1<<OCF1A) 
+	out TIFR, r16
+
+	pop r17
+	pop r16
+ret
 
 DELAY_500MS:
 	push r16
@@ -732,3 +825,42 @@ delay_for_softreset:
 	rjmp cont_send_command
 
 ;############################# END SEND_SENSOR #########################################
+
+
+; Lookup Tables für Temperatur und Humidity
+LUT_Temperatur:
+.db -40,-39,-39,-38,-38,-37,-36,-36,-35,-34,-34,-33,-32,-32,-31,-31
+.db -30,-29,-29,-28,-27,-27,-26,-25,-25,-24,-23,-23,-22,-22,-21,-20
+.db -20,-19,-18,-18,-17,-16,-16,-15,-15,-14,-13,-13,-12,-11,-11,-10
+.db -9,-9,-8,-7,-7,-6,-6,-5,-4,-4,-3,-2,-2,-1,0,0
+.db 1,2,2,3,3,4,5,5,6,7,7,8,9,9,10,10
+.db 11,12,12,13,14,14,15,16,16,17,18,18,19,19,20,21
+.db 21,22,23,23,24,25,25,26,26,27,28,28,29,30,30,31
+.db 32,32,33,34,34,35,35,36,37,37,38,39,39,40,41,41
+.db 42,42,43,44,44,45,46,46,47,48,48,49,50,50,51,51
+.db 52,53,53,54,55,55,56,57,57,58,58,59,60,60,61,62
+.db 62,63,64,64,65,66,66,67,67,68,69,69,70,71,71,72
+.db 73,73,74,74,75,76,76,77,78,78,79,80,80,81,82,82
+.db 83,83,84,85,85,86,87,87,88,89,89,90,90,91,92,92
+.db 93,94,94,95,96,96,97,98,98,99,99,100,101,101,102,103
+.db 103,104,105,105,106,106,107,108,108,109,110,110,111,112,112,113
+.db 114,114,115,115,116,117,117,118,119,119,120,121,121,122,122,123
+
+
+LUT_Humidity:
+.db 0,0,0,0,0,1,1,2,3,3,4,4,5,6,6,7
+.db 7,8,8,9,10,10,11,11,12,12,13,14,14,15,15,16
+.db 16,17,17,18,19,19,20,20,21,21,22,22,23,24,24,25
+.db 25,26,26,27,27,28,28,29,30,30,31,31,32,32,33,33
+.db 34,34,0x23,0x23,36,37,37,38,38,39,39,40,40,41,41,42
+.db 42,43,43,44,44,45,45,46,46,47,47,48,49,49,50,50
+.db 51,51,52,52,53,53,54,54,55,55,56,56,57,57,58,58
+.db 59,59,60,60,61,61,62,62,63,63,64,64,64,65,65,66
+.db 66,67,67,68,68,69,69,70,70,71,71,72,72,73,73,74
+.db 74,75,75,75,76,76,77,77,78,78,79,79,80,80,81,81
+.db 81,82,82,83,83,84,84,85,85,86,86,86,87,87,88,88
+.db 89,89,90,90,90,91,91,92,92,93,93,93,94,94,95,95
+.db 96,96,96,97,97,98,98,99,99,99,100,100,100,100,100,100
+.db 100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100
+.db 100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100
+.db 100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100
