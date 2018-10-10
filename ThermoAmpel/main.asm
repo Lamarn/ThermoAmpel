@@ -1,16 +1,19 @@
 .include "m16adef.inc"
 
 
-
 .def CHECKSUM = R25
 .def RECEIVED_BYTE = R24
 .def RECEIVED_DATA_H = R23
 .def RECEIVED_DATA_L = R22
 .def MODE = R21
+
 .def MEAS_LB_H = R6
 .def MEAS_LB_L = R7
 .def MEAS_UB_H = R8
 .def MEAS_UB_L = R9
+.def TEMP_ABS = R10
+.def HUM_ABS = R11
+.def VORZEICHEN = R12
 
 ;TODO www.mikrocontroller.net/articles/Entprellung
 
@@ -49,6 +52,8 @@
 ;	jmp TIMER1_INTERRUPT_500MS ; Routine nicht nötig, da Flag in DELAY_500MS manuell abgefragt wird
 .org INT2addr
 	jmp INT2_BUTTON_LEFT
+.org $026
+	jmp TIMER0_INTERRUPT
 	
 RESET:
 	; init the stack
@@ -85,6 +90,25 @@ RESET:
 	
 	cbi DDRB, 2
 	sbi PORTB, 2 ; Das selbe für INT2
+	
+	/*
+	; configure 8bit-timer
+	
+	; prescaler auf /1024  + CTC mode + clear on compare match
+	ldi r16, (1<<COM01) | (1<<WGM01) | (1<<CS02) | (1<<CS00)
+	out TCCR0, r16
+	
+	; timer/counter0 compare match interrupt
+	in r16, TIMSK
+	sbr r16, (1<<OCIE0)
+	out TIMSK, r16
+
+	; interrupt bei 39 ~ 10ms
+	ldi r16, 39
+	out OCR0, r16
+
+	*/
+
 
 	; configure 16bit-timer
 
@@ -102,6 +126,29 @@ RESET:
 	ldi r16, (1<<TWPS0) | (1<<TWPS1)
 	out TWSR, r16
 
+	; Initialisiere UART Schnittstelle
+	; Baudrate 9600
+	;cbi UCSRC, URSEL ;eventuell nicht notwendig ?
+	/*ldi r16, UCSRC
+	ldi r17, 0x00 | (1<<URSEL)
+	ldi r18, 0xFF
+	eor r17, r18
+	and r16, r17
+	out UCSRC, r16
+	*/
+
+	ldi r16, 0x00
+	out UBRRH, r16
+    ldi r16, 0b00011001
+    out UBRRL, r16
+	
+	; Frameformat: 8-N-1 (8 Datenbits, No Paritybits, 1 Stopbit)
+	ldi r16, (1<<URSEL)|(1<<UCSZ1)|(1<<UCSZ0)
+	out UCSRC, r16
+
+	; TX aktivieren
+	sbi UCSRB,TXEN
+
 	;damit sensor funktioniert ist nach power-up oder softresetkommando 11 ms delay nötig
 	rcall DELAY_500MS
 
@@ -111,7 +158,9 @@ MAIN:
 	rcall LOAD_HUM_BOUNDS
 	rcall SEND_SENSOR
 	rcall CALC_MEAS ; gerade auf temperatur eingestellt
-	cont_main:
+	cont_main: ; cont from calc meas
+
+	rcall HUMIDITY_CONVERSION ; RECEIVED_DATA_L enthält jetzt absoluten wert
 	rcall DELAY_500MS ; Maximum eine measurement pro sekunde bei 12 bit messungen
 	rcall DELAY_500MS ; 
 
@@ -119,11 +168,124 @@ MAIN:
 	rcall LOAD_TEMP_BOUNDS
 	rcall SEND_SENSOR
 	rcall CALC_MEAS ; gerade auf temperatur eingestellt
-	cont_main2:
+	cont_main2: ; cont from calc meas
+	rcall TEMPERATURE_CONVERSION ; RECEIVED_DATA_L enthält jetzt absoluten wert
 	rcall DELAY_500MS
 	rcall DELAY_500MS
 	
+	rcall UART_REPORT
+	cont_main3:
 rjmp MAIN
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+UART_REPORT:
+loop5:
+    ldi     r17, 'R'
+    rcall   serout                      ; Unterprogramm aufrufen
+	ldi     r17, 'H'
+	rcall   serout
+	ldi     r17, ':'
+	rcall   serout
+	ldi     r17, ' '
+	rcall   serout
+	; Binary to Ascii
+	mov     r18, HUM_ABS
+	rcall BIN2ASCII
+	mov     r17, r20
+	rcall   serout
+	mov     r17, r19
+	rcall   serout
+	mov     r17, r18
+	rcall   serout
+	ldi		r17, '%'
+	rcall   serout
+
+	ldi     r17, ' '
+	rcall   serout
+	ldi     r17, ' '
+	rcall   serout
+	ldi     r17, '|'
+	rcall   serout
+	ldi     r17, ' '
+	rcall   serout
+;;
+	ldi     r17, 'T'
+	rcall   serout
+	ldi     r17, ':'
+	rcall   serout
+	ldi     r17, ' '
+	rcall   serout
+	; Binary to Ascii
+	ldi		r17, '+' ; Vorzeichen bei default '+'
+	mov     r18, TEMP_ABS
+	sbrc	r18, 7 ; Wenn positiv ist skippe; wenn negativ ist vorzeichen -> -
+	ldi		r17, '-'
+	mov		VORZEICHEN, r17
+	sbrc	r18, 7
+	neg		r18
+	rcall BIN2ASCII
+
+	mov		r17, VORZEICHEN
+	rcall   serout
+	mov     r17, r20
+	rcall   serout
+	mov     r17, r19
+	rcall   serout
+	mov     r17, r18
+	rcall   serout
+	ldi		r17, '°'
+	rcall   serout
+	ldi		r17, 'C'
+	rcall   serout
+	ldi     r17, 13 ; ENTER
+	rcall   serout
+	rcall DELAY_500MS
+    rcall   sync        
+	                
+    rjmp    cont_main3
+
+serout:
+    sbis    UCSRA,UDRE                  ; Warten bis UDR für das nächste
+                                        ; Byte bereit ist
+    rjmp    serout
+    out     UDR, r17
+    ret                                 ; zurück zum Hauptprogramm
+
+; kleine Pause zum Synchronisieren des Empfängers, falls zwischenzeitlich
+; das Kabel getrennt wurde
+                                    
+sync:
+    ldi     r16,0
+sync_1:
+    ldi     r17,0
+sync_loop:
+    dec     r17
+    brne    sync_loop
+    dec     r16
+    brne    sync_1  
+    ret
+	
+ret
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Binary to ascii
+;input:  R18 = 8 bit value 0 ... 255
+;output: R20, R19, R18 = ASCII-digits
+BIN2ASCII:
+bcd:
+        ldi     r20, -1 + '0'
+_bcd1:
+        inc     r20
+        subi    r18, 100
+        brcc    _bcd1
+        ldi     r19, 10 + '0'
+_bcd2:
+        dec     r19
+        subi    r18, -10
+        brcs    _bcd2
+        sbci    r18, -'0'
+ret
 
 
 TEMPERATURE_CONVERSION:
@@ -134,7 +296,7 @@ TEMPERATURE_CONVERSION:
 	ldi r17, 0x00
 	add ZL, r16 ; Auf den Tabelleneintrag springen
 	adc ZH, r17 ; Übertrag addieren
-	lpm RECEIVED_DATA_L, Z ; Ergebnis in R_D_L laden
+	lpm TEMP_ABS, Z ; Ergebnis in R_D_L laden
 ret
 
 
@@ -167,7 +329,7 @@ HUMIDITY_CONVERSION:
 	ldi r17, 0x00
 	add ZL, r16 ; Auf den Tabelleneintrag springen
 	adc ZH, r17 ; Übertrag addieren
-	lpm RECEIVED_DATA_L, Z ; Ergebnis in R_D_L laden
+	lpm HUM_ABS, Z ; Ergebnis in R_D_L laden
 ret
 
 divide_data_by_16:
@@ -218,9 +380,9 @@ LOAD_TEMP_BOUNDS:
 	ldi r16, 0b01111010 ; L = Lowbits | Dec. Wert = 6010 = 20°
 	mov MEAS_LB_L, r16
 
-	ldi r16, 0b00011010 ; 
+	ldi r16, 0b00011001 ; 
 	mov MEAS_UB_H, r16
-	ldi r16, 0b10100110 ; 6310 = 23°
+	ldi r16, 0b01101110 ; 25°
 	mov MEAS_UB_L, r16
 
 	pop r16
@@ -297,7 +459,13 @@ OFF_GREEN_LED:
 ret
 
 INT0_BUTTON_MIDDLE:
-	cli
+	in r16, GICR
+	cbr r16, (1<<INT0)
+	out GICR, r16
+	; Timer bei 0 starten lassen
+	ldi r16, 0x00
+	out TCNT0, r16
+
 	push r16
 	push r17
 
@@ -310,11 +478,17 @@ INT0_BUTTON_MIDDLE:
 
 	pop r17
 	pop r16
-	sei
+
 reti
 
 INT1_BUTTON_RIGHT:
-	cli
+	in r16, GICR
+	cbr r16, (1<<INT1)
+	out GICR, r16
+	; Timer bei 0 starten lassen
+	ldi r16, 0x00
+	out TCNT0, r16
+
 	push r16
 	push r17
 
@@ -327,11 +501,18 @@ INT1_BUTTON_RIGHT:
 
 	pop r17
 	pop r16
-	sei
+
 reti
 
 INT2_BUTTON_LEFT:
-	cli
+	in r16, GICR
+	cbr r16, (1<<INT2)
+	out GICR, r16
+	; Timer bei 0 starten lassen
+	ldi r16, 0x00
+	out TCNT0, r16
+
+
 	push r16
 	push r17
 
@@ -344,7 +525,14 @@ INT2_BUTTON_LEFT:
 
 	pop r17
 	pop r16
-	sei
+
+reti
+
+TIMER0_INTERRUPT:
+	;enable button interrupts
+	in r16, GICR
+	sbr r16, (1<<INT2) | (1<<INT1) | (1<<INT0)
+	out GICR, r16
 reti
 
 DELAY_24MS:
@@ -828,7 +1016,7 @@ delay_for_softreset:
 
 
 ; Lookup Tables für Temperatur und Humidity
-LUT_Temperatur:
+LUT_Temperature:
 .db -40,-39,-39,-38,-38,-37,-36,-36,-35,-34,-34,-33,-32,-32,-31,-31
 .db -30,-29,-29,-28,-27,-27,-26,-25,-25,-24,-23,-23,-22,-22,-21,-20
 .db -20,-19,-18,-18,-17,-16,-16,-15,-15,-14,-13,-13,-12,-11,-11,-10
