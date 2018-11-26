@@ -36,14 +36,28 @@ Wir, Ilhan und Lev, hatten wenig Vorwissen in diesem Bereich. Wir haben noch nie
 	\item Groundpins mit Verbindung zur Groundplate richtig einstellen
 	\item Nach dem Löten mit Messgerät schauen, ob Verbindungen da sind wo sie sein sollten und nicht da sind wo sie nicht sein sollten
 \end{itemize}
-\section{Software}
-Dieser Abschnitt beschreibt unsere Herangehensweise an das Programmieren des Mikrocontrollers. Ausgehend davon, dass in der Platine alles korrekt verschaltet ist, kann man mit dem Programmieren beginnen. Wir haben dafür einen Programmer von DIAMEX verwendet. Vorteil bei diesem Programmer ist, dass es die Platine mit 5V versorgen kann, sodass man beim Programmieren die Platine nicht extra an eine Stromversorgung anschließen muss. 
+\section{Funktionsweise der Software}
+Dieser Abschnitt beschreibt unsere Herangehensweise an das Programmieren des Mikrocontrollers und die Funktionsweise des Programms. Ausgehend davon, dass in der Platine alles korrekt verschaltet ist, kann man mit dem Programmieren beginnen. Wir haben dafür einen Programmer von DIAMEX verwendet. Vorteil bei diesem Programmer ist, dass es die Platine mit 5V versorgen kann, sodass man beim Programmieren die Platine nicht extra an eine Stromversorgung anschließen muss. 
 ***-HIER ROUTINE ZUM ÜBERPRÜFEN DER ATMELSTUDIO ERKENNUNG -> Probleme mit 5V usw -> Erdungspins nicht korrekt -> wurde ersichtlich, nach dem schreiben des LED programms.***
-Zum Testen, ob der Mikrocontroller mit unserem Programm überschrieben worden ist, haben wir vorerst ein einfaches Programm geschrieben, welches die LEDs ansteuert. Nachdem die oben genannten Schwierigkeiten überwunden waren und der Mikrocontroller das LED-Programm richtig ausgeführt hat, begannen wir mit der Implementation unserer Aufgabe. Die Aufgabe bestand daraus mittels eines Temperatur- und Luftfeuchtigkeitsensors die Temperatur und Luftfeuchtigkeit auszulesen und über die UART-Schnittstelle auszugeben. Zusätzlich lassen wir über die LEDs anzeigen, ob die Temperator und Luftfeuchtigkeit im guten Bereich liegen. 
+Zum Testen, ob der Mikrocontroller mit unserem Programm überschrieben worden ist, haben wir vorerst ein einfaches Programm geschrieben, welches die LEDs ansteuert. Nachdem die oben genannten Schwierigkeiten überwunden waren und der Mikrocontroller das LED-Programm richtig ausgeführt hat, begannen wir mit der Implementation unserer Aufgabe. **vielleicht etwas weiter am anfang aufgabe beschreiben?**Die Aufgabe bestand daraus mittels eines Temperatur- und Luftfeuchtigkeitsensors die Temperatur und Luftfeuchtigkeit auszulesen und über die UART-Schnittstelle auszugeben. Zusätzlich lassen wir über die LEDs anzeigen, ob die Temperator und Luftfeuchtigkeit im guten Bereich liegen. 
+
+\subsection{Aufbau des Programms}
+In diesem Abschnitt wird der Aufbau des Programms beschrieben.
+\\Vor allem Anderen sollte man "m16adef.inc" über \texttt{.include} einbinden, damit man für den Mikrocontroller spezifische Definitionen verwenden kann. Danach sollte man um das Programm lesbarer zu machen, häufig verwendete Register oder Register die nur einen bestimmten Zweck haben über \texttt{.def} Namen geben. Ebenfalls nützlich ist auch die Verwendung von \texttt{.equ}, womit man häufig verwendeten Werten Namen geben kann.
+\\Durch \texttt{.cseg} gibt man an, dass man sich ab der Zeile im Codesegment befindet. Als Erstes sollte hier die Startadresse stehen. Zu dieser sollte man beim Start oder Reset des Mikrocontrollers springen. Dies erreicht man mit \texttt{.org} für die Adresse 0x000. Dort gibt man dann an, wo das Programm beginnen soll.
+\\Bevor es in die Hauptroutine geht, legen wir fest, was beim Starten oder Neustarten des Mikrocontrollers passieren soll. Zunächst wird der Stack initialisiert. Danach legen wir die LED Pins als Ausgang fest. Weiterhin aktivieren und konfigurieren hier die Interrupts. Zudem wollen wir den 8-Bit und 16-Bit Timer verwenden, welche hier ebenfalls konfiguriert werden. Zum Schluss initialisieren wir noch die UART Schnittstelle.
+\\Die Hauptroutine ist eine Endlosschleife und besteht aus der ständigen Abfrage der Temperatur und relativen Luftfeuchtigkeit gekoppelt mit einem kleinen Wetterbericht, welcher die abgefragten Werte über die UART Schnittstelle überträgt. Zwischen jeder Abfrage haben wir einen Delay von einer Sekunde eingebaut, damit der Sensor nicht überbelastet wird.
+
+\subsection{Timer/Counter}
+
+\subsection{Interrupts}
+Für die Aktivierung von globalen Interrupts muss man zunächst das I Bit im \texttt{SREG} setzen. Der Befehl \texttt{sei} macht genau dies. Um die Interrupts bei den Pins INT0, INT1 und INT2 nun zu aktivieren, setzen wir im \texttt{GICR} Register die Bits \texttt{INT0}, \texttt{INT1} und \texttt{INT2} auf 1. Damit ein Interrupt beim Drücken des Knopfes erzeugt wird, muss eingestellt werden, dass ein Interrupt für INT0-INT2 bei einer fallenden Flanke erzeugt wird. Dies stellt man im \texttt{MCUCR} Register ein, indem man für INT0 das Bit \texttt{ISC01} und für INT1 das Bit \texttt{ISC11} auf 1 setzt. Für INT2 werden standardmäßig Interrupts bei einer fallenden Flanke erzeugt. Um jetzt auf Interrupts zu warten, setzt man die Pins INT0, INT1, INT2 auf Eingang und legt eine 1 an. 
+\\Handler**
+
 \subsection{Ansteuern des Sensors}
-Wie man es nicht machen sollte:
+\subsubsection{Wie man es nicht machen sollte:}
 Zunächst haben wir probiert, mit dem Sensor über das Two-wire Serial Interface (TWI) zu kommunizieren. Wie man über TWI kommuniziert ist im Datenblatt des Atmega16 ausführlich mit Codebeispielen beschrieben ***(Seite 175 ff.)***. Nach der Implementierung einer Routine zum Kommunizieren über TWI fiel uns auf, dass der Sensor TWI gar nicht unterstützt. Eine andere Lösung musste her.
-Wie man es machen sollte:
+\subsubsection{Wie man es machen sollte:}
 Wie man mit dem Sensor richtig kommuniziert, steht im Datenblatt des Sensors geschrieben. Dazu sendet man dem Sensor ein Kommando über den SCK- und DATA-Pin des Sensors, wartet auf die Bearbeitung des Kommandos und liest zum Schluss die Antwort aus. 
 Das Senden eines Kommandos wird mit über das Senden der folgenden Bitfolge initiiert, welche im Datenblatt auch "`Transmission Start"' genannt wird: 
 \begin{figure}[h]
@@ -71,10 +85,21 @@ Die Formel kann man allerdings nicht im Mikrocontroller ohne Weiteres verwenden,
 Die erhaltenen Bits kann man jetzt als Index für den entsprechenden Wert der Bitfolge benutzen. Beispielsweise würde jetzt der Wert 1073, welcher mit einer Genauigkeit von 12 Bit gemessen wurde, durch 16 geteilt und als Index verwendet werden (1073/16 = 67). Der 67. Eintrag der Tabelle entspricht dem Wert 35\% (zuvor 35.50\%). Den Verlust der Genauigkeit nehmen wir hier für eine einfache Implementierung in Kauf. Der Zugriff auf den Eintrag erfolgt über den Befehl \texttt{lpm}. Dazu wird zunächst die Adresse der Tabelle um eine Stelle nach links verschoben in den Z Pointer geladen und auf die Adresse der Index addiert, um beim Verwenden von \texttt{lpm} den richtigen Eintrag zu laden.
 
 \subsection{Ausgabe über UART}
+Vor dem Benutzen der UART Schnittstelle muss man sie richtig initialisieren. Dazu schreibt man zunächst in das \texttt{UBRRH} und \texttt{UBRRH} Register einen Wert, der Abhängig von der Baudrate und der Frequenz des verwendeten Quarz' ist, wobei in das \texttt{UBRRH} Register die acht höherwertigen und in das \texttt{UBRRH} die acht niederwertigen Bits des Wertes stehen müssen. Der Wert wird für den asynchronen normalen Modus, welchen wir verwendet haben, mit folgender Formel berechnet:
+\begin{equation*}
+UBRR = \frac{f_{OSC}}{16*BAUD} -1
+\end{equation*}
+\\Bei einer Frequenz von 4MHz und einer Baudrate von 9600 entspricht das dem Wert 25. \\Zusätzlich muss man den Signalaufbau festlegen. Um einen 8N1 Aufbau zu haben, also einen Aufbau, welcher aus acht Datenbits, keine Paritätsbits und einem Stopbit besteht, muss man im \texttt{UCSRC} Register die Bits in den Feldern \texttt{URSEL}, \texttt{UCSZ1} und \texttt{UCSZ0} auf 1 und die Felder \texttt{UPM1}, \texttt{UPM0} und \texttt{USBS} auf 0 setzen. Dabei erlaubt \texttt{URSEL} das Schreiben in das \texttt{UCSRC} Register, \texttt{UCSZ1} und \texttt{UCSZ0} bestimmen die Anzahl der Datenbits, \texttt{UPM1} und \texttt{UPM0} bestimmen den Paritätsmodus und \texttt{USBS} die Anzahl der Stopbits. Standardmäßig sind alle Felder für unseren gewünschten Signalaufbau entsprechend gesetzt. 
+\\Um vom Mikrocontroller aus etwas Senden zu können, muss jetzt nur noch der Transmitter aktiviert werden. Dazu setzt man im \texttt{UCSRB} Register das \texttt{TXEN} Bit auf 1.
+\\Um zu wissen, ob der Mikrocontroller bereit zum Senden ist, überprüft man das \texttt{UDRE} Bit im \texttt{UCSRA} Register. Ist das Bit gesetzt, bedeutet das, dass man ein Byte in das \texttt{UDR} Register laden und senden kann. Das \texttt{UDRE} Bit gibt hierbei lediglich an, ob das \texttt{UDR} Register leer und bereit für den Empfang von neuen Daten ist. Das Senden kann jetzt wie in Abbildung *** aussehen. ***hier bild einfügen***
+\\Die gesendeten Werte werden als ASCII Werte interpretiert und dargestellt. Das bedeutet, dass man die Temperatur oder die relative Luftfeuchtigkeit in ASCII korrekt umwandeln muss, damit sie richtig dargestellt werden. Für dreistellige Zahlen benötigt man dafür drei Register. Möchte man beispielsweise die Zahl 123 übertragen, sendet man nacheinander die ASCII Symbole '1', '2', '3'. Für die Umwandlung verwenden wir eine Routine aus dem Internet, die binäre Zahlen in ASCII Werte umwandelt. Im Grunde zählt diese Routine die Hunderter, Zehner und Einer der Zahl und benutzt das Symbol '0' als Offset, um die Hunderter, Zehner und Einer jeweils als Symbol darzustellen.
+\\Zu dem Umwandeln muss man noch beachten, dass auch negative Temperaturen richtig angezeigt werden muss. Da der Sensor eine maximale Temperatur von 123,8$^\circ$C messen kann, also alle positiven Temperaturen mit sieben Bits darstellen kann, behandeln wir das MSB als Vorzeichen Bit, wobei die restlichen Bits in ASCII Symbole umgewandelt werden sollen. Anhand des MSB können wir nun '+' für positive und '-' für negative Temperaturen mit angeben.
 
-\subsection{Interrupts}
 
-\subsection{Zusätzlich}
+
+
+
+\subsection{Debug/Simulation}
 
 \section{Schwierigkeiten}
 \begin{itemize}
