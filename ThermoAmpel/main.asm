@@ -7,6 +7,7 @@
 .def RECEIVED_DATA_L = R22
 .def MODE = R21
 
+
 .def MEAS_LB_H = R6
 .def MEAS_LB_L = R7
 .def MEAS_UB_H = R8
@@ -14,6 +15,7 @@
 .def TEMP_ABS = R10
 .def HUM_ABS = R11
 .def VORZEICHEN = R12
+.def COUNTER = R13
 
 ;TODO www.mikrocontroller.net/articles/Entprellung
 
@@ -91,7 +93,7 @@ RESET:
 	cbi DDRB, 2
 	sbi PORTB, 2 ; Das selbe für INT2
 	
-	/*
+	
 	; configure 8bit-timer
 	
 	; prescaler auf /1024  + CTC mode + clear on compare match
@@ -102,12 +104,12 @@ RESET:
 	in r16, TIMSK
 	sbr r16, (1<<OCIE0)
 	out TIMSK, r16
-
-	; interrupt bei 39 ~ 10ms
-	ldi r16, 39
+	
+	; interrupt bei 255 ~ 65.28 ms ; 39 ~ 10ms
+	ldi r16, 255
 	out OCR0, r16
-
-	*/
+	
+	
 
 
 	; configure 16bit-timer
@@ -151,7 +153,6 @@ RESET:
 
 	;damit sensor funktioniert ist nach power-up oder softresetkommando 11 ms delay nötig
 	rcall DELAY_500MS
-
 
 MAIN:
 	ldi MODE, HUMIDITY_MODE; 0b00000011 für Temp, 0b00000101 für Humidity
@@ -459,15 +460,20 @@ OFF_GREEN_LED:
 ret
 
 INT0_BUTTON_MIDDLE:
+	cli
+	push r16
+	push r17
 	in r16, GICR
 	cbr r16, (1<<INT0)
 	out GICR, r16
+	
 	; Timer bei 0 starten lassen
 	ldi r16, 0x00
+	mov COUNTER, r16
 	out TCNT0, r16
+	sei
 
-	push r16
-	push r17
+
 
 	; Toggle gelbe LED
 	in r16, PINA
@@ -482,15 +488,19 @@ INT0_BUTTON_MIDDLE:
 reti
 
 INT1_BUTTON_RIGHT:
+	cli
+	push r16
+	push r17
 	in r16, GICR
 	cbr r16, (1<<INT1)
 	out GICR, r16
+	
 	; Timer bei 0 starten lassen
 	ldi r16, 0x00
+	mov COUNTER, r16
 	out TCNT0, r16
+	sei
 
-	push r16
-	push r17
 
 
 	; Toggle grüne LED
@@ -505,34 +515,58 @@ INT1_BUTTON_RIGHT:
 reti
 
 INT2_BUTTON_LEFT:
+	cli
+	push r16
+	push r17
 	in r16, GICR
 	cbr r16, (1<<INT2)
 	out GICR, r16
+
 	; Timer bei 0 starten lassen
 	ldi r16, 0x00
+	mov COUNTER, r16
 	out TCNT0, r16
+	sei
 
 
-	push r16
-	push r17
 
 	; Toggle rote LED
 	in r16, PINA
 	ldi r17, 0b00100000
 	eor r16, r17
 	out PORTA, r16
-	sei
 
 	pop r17
 	pop r16
-
+	
 reti
 
 TIMER0_INTERRUPT:
-	;enable button interrupts
+	push r16
+	push ZH
+	push ZL
+
+	inc COUNTER
+	; only if counter is at 15 ~ 1 second is over => enable button interrupts
+	ldi r16, 4
+	cp COUNTER, r16
+	brne nicht_setzen
+	
 	in r16, GICR
 	sbr r16, (1<<INT2) | (1<<INT1) | (1<<INT0)
 	out GICR, r16
+	; Reset Counter
+	ldi r16, 0x00
+	mov COUNTER, r16
+
+	nicht_setzen:
+	; clear interrupt flags by default
+	ldi r16, (1<<INTF1) | (1<<INTF0) | (1<<INTF2)
+	out GIFR, r16
+
+	pop ZL
+	pop ZH
+	pop r16
 reti
 
 DELAY_24MS:
@@ -620,9 +654,9 @@ ret
 ;# Überprüft, ob vom Sender empfangene Bytes im korrekten Wertebereich sind und setzt	#
 ;# entsprechend der Werte die LEDS														#
 ;# Rote LED leuchtet:	Relative Luftfeuchtigkeit ist kleiner 40 oder größer 60			#
-;# Gelbe LED leuchtet:	Temperatur ist kleiner 20°C oder größer 23°C					#
+;# Gelbe LED leuchtet:	Temperatur ist kleiner 20°C oder größer 25°C					#
 ;# Grüne LED leuchtet:	Relative Luftfeuchtigkeit zwischen 40-60 und					#
-;#						Temperatur zwischen 20°C - 23°C									#
+;#						Temperatur zwischen 20°C - 25°C									#
 ;########################################################################################
 
 CALC_MEAS:
@@ -1040,7 +1074,7 @@ LUT_Humidity:
 .db 7,8,8,9,10,10,11,11,12,12,13,14,14,15,15,16
 .db 16,17,17,18,19,19,20,20,21,21,22,22,23,24,24,25
 .db 25,26,26,27,27,28,28,29,30,30,31,31,32,32,33,33
-.db 34,34,0x23,0x23,36,37,37,38,38,39,39,40,40,41,41,42
+.db 34,34,35,35,36,37,37,38,38,39,39,40,40,41,41,42
 .db 42,43,43,44,44,45,45,46,46,47,47,48,49,49,50,50
 .db 51,51,52,52,53,53,54,54,55,55,56,56,57,57,58,58
 .db 59,59,60,60,61,61,62,62,63,63,64,64,64,65,65,66
