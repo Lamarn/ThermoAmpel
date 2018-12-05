@@ -543,8 +543,14 @@ reti
 
 TIMER0_INTERRUPT:
 	push r16
+	push r17
 	push ZH
 	push ZL
+
+	; Save global H, V, C flag
+	in r17, SREG
+
+
 
 	inc COUNTER
 	; only if counter is at 15 ~ 1 second is over => enable button interrupts
@@ -564,8 +570,12 @@ TIMER0_INTERRUPT:
 	ldi r16, (1<<INTF1) | (1<<INTF0) | (1<<INTF2)
 	out GIFR, r16
 
+	; Restore global H, V, C flag
+	out SREG, r17
+	
 	pop ZL
 	pop ZH
+	pop r17
 	pop r16
 reti
 
